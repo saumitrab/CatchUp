@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catchup"
+version = "0.1.0"
+description = "CatchUp: Local macOS CLI to transcribe Chrome audio, summarize via local LLM, and answer questions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "pydantic>=2.7.1",
+  "sounddevice>=0.4.6",
+  "numpy>=1.26.4",
+  "faster-whisper>=1.0.0",
+  "sentence-transformers>=3.0.1",
+  "chromadb>=0.5.3",
+  "requests>=2.32.3",
+  "pyyaml>=6.0.2",
+  "tqdm>=4.66.4"
+]
+
+[project.scripts]
+catchup = "apps.cli.main:app"
+
+[tool.setuptools]
+
+[tool.setuptools.packages.find]
+include = ["apps*", "core*"]
+exclude = ["data*", "configs*", "docs*"]

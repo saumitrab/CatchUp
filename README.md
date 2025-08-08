@@ -1,0 +1,38 @@
+# CatchUp
+
+Local macOS CLI to capture **Chrome** audio via **BlackHole 2ch**, transcribe with **faster-whisper**, index with **Chroma**, and generate summaries & Q&A using **LM Studio** (OpenAI-compatible). No audio is written to disk—only text.
+
+## Quick Start
+
+1. **Install BlackHole 2ch** (virtual loopback):
+   ```bash
+   brew install blackhole-2ch
+   ```
+   Route **Chrome** output to **BlackHole 2ch** (System Settings → Sound). Optionally create a Multi-Output to still hear audio.
+
+2. **Setup Python** (3.12+ recommended):
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -e .
+   ```
+
+3. **Run LM Studio** with an OpenAI-compatible server (e.g., `http://localhost:1234/v1`) and pick a local model (e.g., `llama-3.1-8b-instruct`).
+
+4. **Use CatchUp**:
+   ```bash
+   catchup start --session "APAC Summit"
+   # ... later ...
+   catchup stop
+   catchup summarize --session-id <id>
+   catchup ask --session-id <id> "What did they say about trade-offs?"
+   catchup export --session-id <id> --formats srt,vtt
+   ```
+
+## Notes
+- 100% local by default. No web search.
+- Default ASR model: `small`. You can switch to `medium` via `--model` or config.
+- See `configs/default.yaml` for defaults (overridable via env vars prefixed with `CATCHUP_`).
+
+## Disclaimer
+Use only where you have rights. CatchUp is a local note-taking tool; it does not upload or publish your content.
