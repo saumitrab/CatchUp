@@ -12,7 +12,7 @@ from rich import print as rprint
 from rich.prompt import Confirm
 from rich.table import Table
 
-from core.asr.whisper_rt import WhisperRealtime, Segment
+from core.asr.whisper_rt import WhisperRealtime
 from core.audio.loopback import AudioStream, find_device
 from core.chunking.segment_merger import Seg, merge_segments
 from core.embed.encoder import STEncoder
@@ -28,6 +28,7 @@ from core.summarize.pipeline import map_reduce, simple
 from core.utils.config import load_config
 from core.utils.logging import setup_logging
 from core.utils.time import now_iso
+from core.audio.resample import resample_to_16k  # NEW: 16 kHz resampler
 
 app = typer.Typer(add_completion=False)
 logger = setup_logging()
@@ -56,19 +57,20 @@ def start(
     model: str = typer.Option("small", help="ASR model: small|medium"),
     # ASR backend selection — leave None to auto-detect (Metal on macOS; CPU elsewhere)
     device: Optional[str] = typer.Option(
-        None, help="ASR device override: metal|cpu|auto (default: auto-detect)"
+        None, help="ASR device override: metal|cpu|cuda|auto (default: auto-detect)"
     ),
     compute_type: Optional[str] = typer.Option(
         None, help="ASR compute type override (e.g., float16 on Metal, int8 on CPU)"
     ),
     # Audio input device match
     input_device: str = typer.Option(
-        "BlackHole", help='Input device name contains this string (e.g., "BlackHole")'
+        "BlackHole 2ch", help='Input device name contains this string (e.g., "BlackHole 2ch")'
     ),
     autosave_sec: int = typer.Option(10, help="Autosave frequency in seconds (metadata)"),
     vad: str = typer.Option("off", help="(placeholder for future VAD) on|off"),
     llm_model: str = typer.Option("llama-3.1-8b-instruct", help="LM Studio model name"),
     embed_model: str = typer.Option("all-MiniLM-L6-v2", help="Sentence-Transformers model"),
+    lang: str = typer.Option("en", help="Language code, or 'auto' to autodetect"),
 ):
     """
     Start capturing audio from the loopback device, transcribe in rolling chunks,
@@ -107,9 +109,9 @@ def start(
     # Initialize ASR with robust auto device/compute selection
     asr = WhisperRealtime(
         model_name=model,
-        device=device,  # None -> auto
+        device=device,            # None -> auto
         compute_type=compute_type,  # None -> auto
-        language="en",
+        language=(None if lang == "auto" else lang),
         beam_size=beam,
     )
 
@@ -130,17 +132,20 @@ def start(
                     rprint("[yellow]Stop flag detected. Finalizing...[/yellow]")
                     break
 
-                # Read ~1 second of audio into memory (float32, mono)
+                # Read ~1 second of audio into memory (float32, mono-left)
                 frames = stream.read(int(samplerate * 1))
                 buf.append(frames.copy())
 
                 total = sum(len(x) for x in buf)
                 if total >= frames_per_chunk:
-                    # --- build a single contiguous chunk ---
+                    # --- build a single contiguous chunk at capture rate (e.g., 48k) ---
                     concat = np.concatenate(buf, axis=0).astype("float32")
 
-                    # Transcribe this chunk with the current stream offset
-                    for seg in asr.transcribe_chunk(concat, offset_sec):
+                    # RESAMPLE to 16 kHz for Whisper arrays
+                    audio16 = resample_to_16k(concat, samplerate)
+
+                    # Transcribe this chunk with the current stream offset (offset is wall time in seconds)
+                    for seg in asr.transcribe_chunk(audio16, offset_sec):
                         seg_count += 1
                         rec = {
                             "seg_id": seg.seg_id,
@@ -151,7 +156,7 @@ def start(
                         }
                         atomic_append_jsonl(sp.transcript_jsonl, rec)
 
-                    # Slide the buffer: keep only overlap tail
+                    # Slide the buffer: keep only overlap tail (in capture-rate samples)
                     keep = frames_overlap
                     processed = max(0, len(concat) - keep)
                     offset_sec += processed / samplerate
@@ -395,6 +400,28 @@ def clean(session_id: str = typer.Option(...), force: bool = False):
         removed = True
 
     rprint("[green]Cleaned derived files.[/green]" if removed else "[yellow]Nothing to clean.[/yellow]")
+
+
+@app.command()
+def devices():
+    """List input-capable audio devices (for --input-device matching)."""
+    import sounddevice as sd
+
+    devs = sd.query_devices()
+    table = Table(title="Input devices")
+    table.add_column("Index")
+    table.add_column("Name")
+    table.add_column("Max In")
+    table.add_column("Default SR")
+    for i, d in enumerate(devs):
+        if d.get("max_input_channels", 0) > 0:
+            table.add_row(
+                str(i),
+                d.get("name", ""),
+                str(d.get("max_input_channels", 0)),
+                str(d.get("default_samplerate", "")),
+            )
+    rprint(table)
 
 
 if __name__ == "__main__":
